@@ -1,0 +1,4 @@
+.cabal-sandbox
+*.sw[opqr]
+dist
+.DS_Store
