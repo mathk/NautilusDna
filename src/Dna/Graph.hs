@@ -11,7 +11,7 @@ import Data.STRef
 import Control.Monad
 import Data.Maybe
 import Control.Applicative
-import Numeric.LinearAlgebra (rows, (!), cols, toLists, (?), toList)
+import Numeric.LinearAlgebra (rows, (!), cols, toLists, (?), (¿), toList)
 import Numeric.LinearAlgebra.Data (Matrix, I)
 import Numeric.LinearAlgebra.Devel
 import Control.Monad.ST
@@ -21,7 +21,8 @@ import qualified Data.Set as S
 
 data Ord a => Graph a = GraphInternal {
     node :: S.Set a,
-    connection :: Matrix I
+    connection :: Matrix I,
+    mode :: Maybe (Int,Int)
 }
 
 instance (Ord a, Show a) => Show (Graph a) where
@@ -59,13 +60,14 @@ graphFromConnection connections = GraphInternal
                 forM_ connectee $ \ to ->
                     modifyMatrix m (findIndex from) (findIndex to) (1+)
             return m)
+        Nothing
     where
         nodes = S.fromList $ allPossibleNode connections
         findIndex = flip S.findIndex nodes
         nodesLen = S.size nodes
 
 euclidianCycle :: Ord a => Graph a -> Maybe [(a,a)]
-euclidianCycle (GraphInternal nodes m) = runST $ do
+euclidianCycle (GraphInternal nodes m _) = runST $ do
     traverseM <- thawMatrix m
     path <- findEuclidianCycleAt nodes traverseM (Just 0)
     findNext path traverseM
@@ -111,9 +113,14 @@ findNextEuclidianAt nodes mat n = do
     when (isJust next) $ modifyMatrix mat n (fst . fromJust $ next) (subtract 1)
     return $ fst <$> next
 
+eulerianNode :: Int -> Matrix I -> Int
+eulerianNode n m = ti (sum (concat colConnection)) - ti (sum (concat rowConnection))
+    where
+        colConnection = toLists $ m ¿ [n]
+        rowConnection = toLists $ m ? [n]
 
-euclidianNode :: Int -> STMatrix s I -> ST s Bool
-euclidianNode n m = do
+eulerianNodeST :: Int -> STMatrix s I -> ST s Bool
+eulerianNodeST n m = do
     colm <- extractMatrix m AllRows (Col n)
     rowm <- extractMatrix m (Row n) AllCols
     return $ (sum . concat . toLists) colm == (sum . concat . toLists) rowm
