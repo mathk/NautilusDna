@@ -6,6 +6,7 @@ import Dna.Nucleotides
 import Dna.MetaInfo
 import Control.Monad
 import Dna.Graph
+import Debug.Hoed.Pure
 
 dnaSpell = do
     dnas <- read <$> readFile ""

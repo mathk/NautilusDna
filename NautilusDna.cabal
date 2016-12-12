@@ -61,7 +61,8 @@ library
                        matrix,
                        bytestring,
                        containers,
-                       hmatrix
+                       hmatrix,
+                       Hoed
 
   -- Directories containing source files.
   hs-source-dirs:      src
@@ -77,8 +78,7 @@ library
 
 executable testing
     main-is:    Main.hs
-    build-depends:       base <4.10, NautilusDna, matrix,bytestring, containers, hmatrix
+    build-depends:       base <4.10, NautilusDna, matrix,bytestring, containers, hmatrix, Hoed
     other-modules: Dna.Nucleotides, Dna.Search, Dna.Graph
     default-language:    Haskell2010
     hs-source-dirs:      src
-    ghc-options:         -rtsopts -prof

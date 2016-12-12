@@ -1,0 +1,17 @@
+flags: {}
+user-message: ! 'Warning (added by new or init): Some packages were found to be incompatible
+  with the resolver and have been left commented out in the packages section.
+
+  You can suppress this message by removing it from stack.yaml
+
+'
+extra-package-dbs: []
+packages:
+- '.'
+extra-deps:
+- FPretty-1.1
+- Hoed-0.3.5
+- RBTree-0.0.5
+- libgraph-1.10
+- threepenny-gui-0.6.0.6
+resolver: lts-6.26
