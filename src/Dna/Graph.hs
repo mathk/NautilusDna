@@ -1,11 +1,16 @@
-{-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE ScopedTypeVariables, RankNTypes #-}
 
 module Dna.Graph (
-readConnection,readAllConnection,allPossibleNode,graphFromConnection,Graph,euclidianCycle
+readConnection,readAllConnection,
+allPossibleNode,graphFromConnection,
+Graph,euclidianCycle,
+unbalanceNodes,
+canBeBalance, balance, initOverlaGraph
 )
 where
 
 import Data.List
+import Data.Tuple
 import Data.Functor
 import Data.STRef
 import Control.Monad
@@ -19,22 +24,36 @@ import Control.Monad.ST
 import qualified Data.ByteString.Lazy.Char8 as C
 import qualified Data.Set as S
 
-data Ord a => Graph a = GraphInternal {
+data Graph a = GraphInternal {
     node :: S.Set a,
     connection :: Matrix I,
-    mode :: Maybe (Int,Int)
+    addCon :: Maybe (a,a)
 }
 
 instance (Ord a, Show a) => Show (Graph a) where
-    show graph = intercalate "\n"
-            [link | row <- [0 .. rows (connection graph) - 1],
-                    any (isLink row) [0 .. cols (connection graph) - 1],
-                    link <- [show (S.elemAt row (node graph)) ++ " -> " ++
-                             intercalate "," (concatMap (\col -> replicate (fromIntegral $ linkCount row col) $ show  $ S.elemAt col (node graph))
-                                                (filter (isLink row) [0 .. cols (connection graph) - 1]))]]
-                where
-                    linkCount row col = connection graph ! row ! col
-                    isLink row col =   linkCount row col >= 1
+    show graph = fromMaybe matrixShow (do
+                    (from,to) <- addCon graph
+                    return $ matrixShow ++ "\n With Link: " ++ show from  ++ "->" ++ show to)
+        where
+            linkCount row col = connection graph ! row ! col
+            isLink row col =   linkCount row col >= 1
+            matrixShow = intercalate "\n"
+                [link | row <- [0 .. rows (connection graph) - 1],
+                        any (isLink row) [0 .. cols (connection graph) - 1],
+                        link <- [show (S.elemAt row (node graph)) ++ " -> " ++
+                                 intercalate "," (concatMap (\col -> replicate (fromIntegral $ linkCount row col) $ show  $ S.elemAt col (node graph))
+                                                    (filter (isLink row) [0 .. cols (connection graph) - 1]))]]
+
+initOverlaGraph :: Ord a =>  [a] -> (forall s. STMatrix s I -> (a -> Int) -> ST s ()) -> Graph a
+initOverlaGraph nodes f = GraphInternal setNode (runSTMatrix $ do
+        m <- newMatrix 0 lenNodes lenNodes
+        f m (`S.findIndex` setNode)
+        return m
+    ) Nothing
+    where
+        setNode = S.fromList nodes
+        lenNodes  = length setNode
+
 
 readConnection :: (Read a) => String -> (a, [a])
 readConnection info = case lex info of
@@ -67,15 +86,18 @@ graphFromConnection connections = GraphInternal
         nodesLen = S.size nodes
 
 euclidianCycle :: Ord a => Graph a -> Maybe [(a,a)]
-euclidianCycle (GraphInternal nodes m _) = runST $ do
-    traverseM <- thawMatrix m
-    path <- findEuclidianCycleAt nodes traverseM (Just 0)
-    findNext path traverseM
-        where findNext path m = do
-                newPath <- findNextEuclidianPath nodes m path
-                if isJust newPath
-                    then findNext newPath m
-                    else return path
+euclidianCycle g = do
+    (GraphInternal nodes m newCon) <- balance g
+    conn <- runST $ do
+        traverseM <- thawMatrix m
+        path <- findEuclidianCycleAt nodes traverseM (Just 0)
+        findNext nodes path traverseM
+    return $ maybe conn (\(from,to) -> init $ uncurry (++) (swap (break ( (to == ).fst ) conn))) newCon
+  where findNext nodes path m = do
+            newPath <- findNextEuclidianPath nodes m path
+            if isJust newPath
+                then findNext nodes newPath m
+                else return path
 
 findNextEuclidianPath :: Ord a => S.Set a -> STMatrix s I -> Maybe [(a,a)] -> ST s (Maybe [(a,a)])
 findNextEuclidianPath nodes mat path = do
@@ -112,6 +134,30 @@ findNextEuclidianAt nodes mat n = do
     let next = find ((>0).snd) (zip [0..] con)
     when (isJust next) $ modifyMatrix mat n (fst . fromJust $ next) (subtract 1)
     return $ fst <$> next
+
+mapFst :: (a -> b) -> [(a,c)] -> [(b,c)]
+mapFst f = map (uncurry $ (,) . f)
+
+canBeBalance :: Ord a => Graph a -> Bool
+canBeBalance g = case unbal of
+    [(_,-1), (_,1)] -> True
+    [(_,1), (_,-1)] -> True
+    [] -> True
+    _ -> False
+  where unbal = unbalanceNodes g
+
+balance :: Ord a => Graph a -> Maybe (Graph a)
+balance g@(GraphInternal node connection addCon) = case unbal of
+    [(to,-1), (from,1)] -> return (GraphInternal node (fst (mutable (correctingMatrix (S.findIndex from node) (S.findIndex to node)) connection)) (Just (from,to)))
+    [(from,1), (to,-1)] -> return (GraphInternal node (fst (mutable (correctingMatrix (S.findIndex from node) (S.findIndex to node)) connection)) (Just (from,to)))
+    [] -> return g
+    _ -> Nothing
+  where
+    unbal = unbalanceNodes g
+    correctingMatrix f t _ m = modifyMatrix m f t (+1)
+
+unbalanceNodes :: Ord a => Graph a -> [(a,Int)]
+unbalanceNodes (GraphInternal nodes m _) =filter ((0 /= ) . snd) (mapFst (`S.elemAt` nodes) (map (\idx -> (idx,eulerianNode idx m)) [0..(S.size nodes - 1)]))
 
 eulerianNode :: Int -> Matrix I -> Int
 eulerianNode n m = ti (sum (concat colConnection)) - ti (sum (concat rowConnection))

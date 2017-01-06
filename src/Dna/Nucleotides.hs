@@ -1,19 +1,30 @@
 {-# LANGUAGE FlexibleInstances, RankNTypes #-}
 module Dna.Nucleotides (
-    Nucleotide, Dna, DnaList, Rna, (+:+), isDnaPrefixOf, lengthDna,
-    groupDna, tailDna, readsDna, DnaGraph, nullDna, liftDna2, liftDna, takeDna,
-    overlapGraphFromNode, initOverlaGraph, dnaToRna, dropDna, dnaComplement)
+    Nucleotide, Dna, DnaList, Rna, (+:+),
+    isDnaPrefixOf, lengthDna,
+    groupDna, tailDna, readsDna, nullDna,
+    liftDna2, liftDna, takeDna, dnaToRna,
+    dropDna, dnaComplement, FastaSequence,
+    parseFastaFile, highestGC)
 where
 
-import Data.List
-import Data.Functor
-import Data.STRef
-import Control.Monad
-import Control.Applicative
-import Numeric.LinearAlgebra
-import Numeric.LinearAlgebra.Data
-import Numeric.LinearAlgebra.Devel
-import Control.Monad.ST
+import           Text.Printf
+import           Data.Ratio
+import           Control.Monad.IO.Class
+import           Data.List
+import           Data.Functor
+import           Data.STRef
+import           Control.Monad
+import           Control.Applicative
+import           Numeric.LinearAlgebra
+import           Numeric.LinearAlgebra.Data
+import           Numeric.LinearAlgebra.Devel
+import           Control.Monad.ST
+import qualified Text.Parser.Combinators as P
+import qualified Text.Parser.Char as P
+import qualified Text.Parser.Token as P
+import qualified Text.Trifecta.Parser as P
+
 
 import qualified Data.ByteString.Lazy.Char8 as C
 import qualified Data.Set as S
@@ -29,12 +40,45 @@ instance Show Nucleotide where
     show T = "T"
     show U = "U"
 
+data FastaSequence a = Fasta {
+    _fastaId :: String,
+    _fastaInfo :: a}
+
+class FastaParseInfo a where
+    parse :: P.TokenParsing m => m a
+
+instance Functor FastaSequence where
+    fmap f (Fasta ident datum) = Fasta ident (f datum)
+
+instance FastaParseInfo Dna where
+    parse = DnaIntern . concat <$> P.sepEndBy (many parseDnaNucleotide) P.newline
+
+instance FastaParseInfo Rna where
+    parse = RnaIntern . concat <$> P.sepEndBy (many parseRnaNucleotide) P.newline
 
 newtype Dna = DnaIntern [Nucleotide]
     deriving (Ord, Eq)
 newtype Rna = RnaIntern [Nucleotide]
     deriving (Ord, Eq)
 type DnaList = [Dna]
+
+parseFastaFile :: (FastaParseInfo a, MonadIO m) => String -> m (Maybe [FastaSequence a])
+parseFastaFile = P.parseFromFile parseFastaList
+
+parseDnaNucleotide :: P.TokenParsing m => m Nucleotide
+parseDnaNucleotide = P.choice [P.string "A" *> pure A, P.string "T" *> pure T, P.string "G" *> pure G, P.string "C" *> pure C]
+
+parseRnaNucleotide :: P.TokenParsing m => m Nucleotide
+parseRnaNucleotide = P.choice [P.string "A" *> pure A, P.string "U" *> pure U, P.string "G" *> pure G, P.string "C" *> pure C]
+
+
+parseFastaList :: (FastaParseInfo a, P.TokenParsing m) => m [FastaSequence a]
+parseFastaList = P.many parseFasta
+
+parseFasta :: (FastaParseInfo a, P.TokenParsing m) => m (FastaSequence a)
+parseFasta = Fasta
+                <$> (P.string ">" *> P.manyTill P.anyChar P.newline)
+                <*> parse
 
 unDna (DnaIntern dna) = dna
 unRna (DnaIntern rna) = rna
@@ -75,6 +119,11 @@ instance Show Dna where
 instance Show Rna where
     show (RnaIntern rna) = foldr ((++) . show) "" rna
 
+instance (Show a) => Show (FastaSequence a) where
+    show (Fasta ident datum) = ">" ++ ident ++ "\n" ++ show datum ++ "\n"
+
+instance {-# OVERLAPPING #-} Show (FastaSequence Rational) where
+    show (Fasta ident datum) = ">" ++ ident ++ "\n" ++ show (fromRational datum :: Double)  ++ "\n"
 
 instance {-# OVERLAPPING #-} Show DnaList where
     show = intercalate "\n" . map show
@@ -89,6 +138,9 @@ readsNucleotide _ ('U':xs) = [(U,xs)]
 
 instance Read Nucleotide where
     readsPrec = readsNucleotide
+
+highestGC :: [FastaSequence Dna] -> FastaSequence Rational
+highestGC = last . sortOn  _fastaInfo . fmap  ((`frequency` [C,G]) <$>)
 
 readsDna        :: Int -> ReadS Dna
 readsDna  _ []  = [(DnaIntern [],[])]
@@ -129,45 +181,13 @@ instance {-# OVERLAPPING #-} Read DnaList where
     readsPrec = readsDnaList
 
 
-data DnaGraph = DnaGraphInternal {
-    node :: S.Set Dna,
-    connection :: Matrix I
-}
-
 isConnected :: Dna -> Dna -> Bool
 isConnected (DnaIntern first) (DnaIntern second) = and $ zipWith (==) (tail first) second
 
-initOverlaGraph :: DnaList -> (forall s. STMatrix s I -> (Dna -> Int) -> ST s ()) -> DnaGraph
-initOverlaGraph nodes f = DnaGraphInternal setNode (runSTMatrix $ do
-        m <- newMatrix 0 lenNodes lenNodes
-        f m (`S.findIndex` setNode)
-        return m
-    )
-    where
-        setNode = S.fromList nodes
-        lenNodes  = length setNode
-
-overlapGraphFromNode nodes = DnaGraphInternal seqNode
-            (build (lenMat,lenMat) (\first second ->
-                if isConnected (S.elemAt (fromIntegral first) seqNode ) (S.elemAt (fromIntegral second) seqNode )
-                    then 1
-                    else 0))
-        where seqNode = S.fromList nodes
-              lenMat  = length seqNode
-
-instance Show DnaGraph where
-    show graph = intercalate "\n"
-            [link | row <- [0 .. rows (connection graph) - 1],
-                    any (isLink row) [0 .. cols (connection graph) - 1],
-                    link <- [show (S.elemAt row (node graph)) ++ " -> " ++
-                             intercalate "," (concatMap (\col -> replicate (fromIntegral $ linkCount row col) $ show  $ S.elemAt col (node graph))
-                                                (filter (isLink row) [0 .. cols (connection graph) - 1]))]]
-                where
-                    linkCount row col = connection graph ! row ! col
-                    isLink row col =   linkCount row col >= 1
-
-mapNucleotidDnaRna T = U
-mapNucleotidDnaRna a = a
-
 dnaToRna :: Dna -> Rna
 dnaToRna = RnaIntern . map mapNucleotidDnaRna . unDna
+    where mapNucleotidDnaRna T = U
+          mapNucleotidDnaRna a = a
+
+frequency :: Dna -> [Nucleotide] -> Rational
+frequency (DnaIntern d) pop = fromIntegral (length (filter (`elem` pop) d)) %  fromIntegral (length d)

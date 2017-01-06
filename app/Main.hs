@@ -6,6 +6,7 @@ import Dna.Nucleotides
 import Dna.MetaInfo
 import Control.Monad
 import Dna.Graph
+import Data.Maybe
 import Debug.Hoed.Pure
 
 dnaSpell = do
@@ -48,9 +49,25 @@ complement = do
     dna <- readLn
     print $ dnaComplement dna
 
-main = do
-    inGraph <- readFile "samples/sample_graph.txt"
+canBeBalanceTest :: IO ()
+canBeBalanceTest = do
+    inGraph <- readFile "samples/graph1_ba3g.txt"
+    let graph = (graphFromConnection $ readAllConnection inGraph) :: Graph Int
+    print $ canBeBalance graph
+
+balanceTest :: IO ()
+balanceTest = do
+    inGraph <- readFile "samples/graph1_ba3g.txt"
+    let graph = (graphFromConnection $ readAllConnection inGraph) :: Graph Int
+    print $ balance graph
+
+euclidianCycleTest = do
+    inGraph <- readFile "samples/graph1_ba3g.txt"
     let graph = (graphFromConnection $ readAllConnection inGraph) :: Graph Int
     let cycle = euclidianCycle graph
     let out = liftM2 (++) (fmap (show.fst.head) cycle) (fmap (concatMap (("->" ++) . show . snd)) cycle)
     writeFile "samples/sample_graphout.txt" (show (fromMaybe "" out))
+
+main = do
+    fastaList <- parseFastaFile "samples/fasta_ex.fas"
+    return $ fmap highestGC fastaList

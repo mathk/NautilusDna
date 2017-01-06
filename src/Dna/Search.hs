@@ -3,6 +3,7 @@ module Dna.Search (
     initDeBrujinGraphFromKMers,
     initDeBrujinGraphFromDna, fibrabbit) where
 
+import Dna.Graph
 import Dna.Nucleotides
 import Data.List
 import Control.Applicative
@@ -37,7 +38,7 @@ dnaFromSepll (x:xs) = dnaSpellStep 1 x xs
             Nothing -> growDna
 
 
-initDeBrujinGraphFromDna :: Int -> Dna -> DnaGraph
+initDeBrujinGraphFromDna :: Int -> Dna -> Graph Dna
 initDeBrujinGraphFromDna n dnas = initOverlaGraph nodes $ \ m findIndex ->
         forM_ adjacentNodes $ \ (from, to) ->
             modifyMatrix m (findIndex from) (findIndex to) (1+)
@@ -45,7 +46,7 @@ initDeBrujinGraphFromDna n dnas = initOverlaGraph nodes $ \ m findIndex ->
         nodes = composingKMer n dnas
         adjacentNodes = zip (init nodes) (tail nodes)
 
-initDeBrujinGraphFromKMers :: DnaList -> DnaGraph
+initDeBrujinGraphFromKMers :: DnaList -> Graph Dna
 initDeBrujinGraphFromKMers kmers = initOverlaGraph nodes $ \m findIdxNode ->
     forM_ nodes $ \from ->
         forM_ (map tailDna (filter (from `isDnaPrefixOf`) kmers)) $ \to ->
